@@ -1,54 +1,18 @@
 #![no_std]  // On n'utilise pas la bibliothèque standard
 #![no_main] // On n'utilise pas le point d'entrée standard
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::test_runner)]
+#![test_runner(rust_kernel::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    #[cfg(test)]
-    test_main();
-
-    #[allow(clippy::empty_loop)]
-    loop {}
-}
 mod vga_buffer;
 mod serial;
 
 use core::panic::PanicInfo;
 
+
+
 pub trait Testable {
     fn run(&self) -> ();
-}
-
-impl<T> Testable for T
-where
-    T: Fn(),
-{
-    fn run(&self) {
-        serial_print!("{}...\t", core::any::type_name::<T>());
-        self();
-        serial_println!("[ok]");
-    }
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-
-pub enum QemuExitCode {
-    Success = 0x10,
-    Failed = 0x11,
-}
-
-pub fn exit_qemu(exit_code: QemuExitCode) {
-    use x86_64::instructions::port::Port;
-
-    unsafe {
-        let mut port = Port::new(0xf4);
-        port.write(exit_code as u32);
-    }
 }
 
 // Gestionnaire de panique
@@ -62,6 +26,7 @@ fn panic(info: &PanicInfo) -> ! {
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    rust_kernel::test_panic_handler(info);
     serial_println!("[failed]\n");
     serial_println!("Error: {}\n", info);
     exit_qemu(QemuExitCode::Failed);
@@ -69,21 +34,12 @@ fn panic(info: &PanicInfo) -> ! {
 
 }
 
-
-
-#[cfg(test)]
-pub fn test_runner(tests: &[&dyn Testable]) {
-    serial_println!("Running {} tests", tests.len());
-    for test in tests {
-        test.run();
-    }
-
-    exit_qemu(QemuExitCode::Success);
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    #[cfg(test)]
+    test_main();
+    #[allow(clippy::empty_loop)]
+    loop {}
 }
 
-#[test_case]
-fn trivial_assertion() {
-    assert_eq!(1, 1);
-    
-}
 
