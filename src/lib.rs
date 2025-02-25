@@ -7,6 +7,7 @@
 
 pub mod vga_buffer;
 pub  mod serial;
+pub mod slab_allocator;
 
 use core::panic::PanicInfo;
 
@@ -45,7 +46,7 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
 #[cfg(test)]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-  
+    slab_allocator::init_heap();
     test_main();
     #[allow(clippy::empty_loop)]
     loop {}

@@ -9,7 +9,6 @@
     "executables": true,
     "panic-strategy": "abort",
     "disable-redzone": true,
-    "features": "-mmx,-sse,+soft-float",
     "linker-flavor": "ld.lld",
     "linker": "rust-lld"
 }

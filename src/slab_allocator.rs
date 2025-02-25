@@ -1,10 +1,8 @@
-// Soon lib.rs
-#![no_std]
-#![feature(const_mut_refs)]
-#![feature(allocator_api)]
+// slab_allocator.rs
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::NonNull;
+use core::marker::PhantomData;
 use spin::Mutex;
 
 // Define the fixed sizes we'll support in our slab allocator
@@ -14,7 +12,12 @@ struct Slab {
     block_size: usize,
     free_blocks: NonNull<FreeBlock>,
     blocks_count: usize,
+    // Add PhantomData to make NonNull Send/Sync
+    _phantom: PhantomData<FreeBlock>,
 }
+
+unsafe impl Send for Slab {}
+unsafe impl Sync for Slab {}
 
 impl Slab {
     const fn new() -> Self {
@@ -22,6 +25,7 @@ impl Slab {
             block_size: 0,
             free_blocks: NonNull::dangling(),
             blocks_count: 0,
+            _phantom: PhantomData,
         }
     }
 
@@ -30,21 +34,26 @@ impl Slab {
         let blocks_count = heap_size / block_size;
         self.blocks_count = blocks_count;
         
+        if blocks_count == 0 {
+            self.free_blocks = NonNull::dangling();
+            return;
+        }
+        
         // Initialize free block list
         let mut current_block = heap_start as *mut FreeBlock;
-        for _ in 0..blocks_count {
+        for _ in 0..blocks_count - 1 {
             unsafe {
                 (*current_block).next = NonNull::new(current_block.add(1)).unwrap();
                 current_block = current_block.add(1);
             }
         }
         
-        // Set the last block's next pointer to null
+        // Set the last block's next pointer to dangling
         unsafe {
-            (*current_block.sub(1)).next = NonNull::dangling();
+            (*current_block).next = NonNull::dangling();
         }
         
-        self.free_blocks = unsafe { NonNull::new(heap_start as *mut FreeBlock).unwrap() };
+        self.free_blocks = NonNull::new(heap_start as *mut FreeBlock).unwrap();
     }
     
     fn allocate(&mut self) -> Option<NonNull<u8>> {
@@ -75,19 +84,30 @@ struct FreeBlock {
     next: NonNull<FreeBlock>,
 }
 
-// Slab allocator structure
+// Make FreeBlock safe to share between threads
+unsafe impl Send for FreeBlock {}
+unsafe impl Sync for FreeBlock {}
+
+// Slab allocator structure with tracking for heap regions
 pub struct SlabAllocator {
     slabs: [Mutex<Slab>; BLOCK_SIZES.len()],
-    fallback_allocator: linked_list_allocator::Heap,
+    slab_heap_regions: [Mutex<(usize, usize)>; BLOCK_SIZES.len()], // (start, end) for each slab region
+    fallback_allocator: Mutex<linked_list_allocator::Heap>,
 }
+
+// Explicitly implement Send and Sync for SlabAllocator
+unsafe impl Send for SlabAllocator {}
+unsafe impl Sync for SlabAllocator {}
 
 impl SlabAllocator {
     // Create a new empty slab allocator
     pub const fn new() -> Self {
         const EMPTY_SLAB: Mutex<Slab> = Mutex::new(Slab::new());
+        const EMPTY_REGION: Mutex<(usize, usize)> = Mutex::new((0, 0));
         SlabAllocator {
             slabs: [EMPTY_SLAB; BLOCK_SIZES.len()],
-            fallback_allocator: linked_list_allocator::Heap::empty(),
+            slab_heap_regions: [EMPTY_REGION; BLOCK_SIZES.len()],
+            fallback_allocator: Mutex::new(linked_list_allocator::Heap::empty()),
         }
     }
     
@@ -99,17 +119,27 @@ impl SlabAllocator {
         
         // Initialize each slab with its portion of the heap
         for (i, &block_size) in BLOCK_SIZES.iter().enumerate() {
+            // Store the region bounds
+            *self.slab_heap_regions[i].lock() = (current_heap_start, current_heap_start + slab_heap_size);
+            
+            // Initialize the slab
             self.slabs[i].lock().init(block_size, current_heap_start, slab_heap_size);
             current_heap_start += slab_heap_size;
         }
         
         // Initialize fallback allocator with remaining space
         let remaining_size = heap_size - (slab_heap_size * BLOCK_SIZES.len());
-        self.fallback_allocator.init(current_heap_start as *mut u8, remaining_size);
+        if remaining_size > 0 {
+            // Use unsafe block around the unsafe function call
+            unsafe {
+                self.fallback_allocator.lock().init(current_heap_start as usize, remaining_size);
+            }
+        }
     }
     
     // Find the appropriate slab for a given layout
     fn find_slab_index(&self, layout: &Layout) -> Option<usize> {
+        // Consider both size and alignment requirements
         let required_block_size = layout.size().max(layout.align());
         BLOCK_SIZES.iter()
             .position(|&size| size >= required_block_size)
@@ -127,29 +157,37 @@ unsafe impl GlobalAlloc for SlabAllocator {
         }
         
         // If no slab fits or all slabs are full, use fallback allocator
-        self.fallback_allocator.allocate_first_fit(layout)
-            .ok()
-            .map_or(core::ptr::null_mut(), |allocation| allocation.as_ptr())
+        
+            self.fallback_allocator.lock().allocate_first_fit(layout)
+                .ok()
+                .map_or(core::ptr::null_mut(), |allocation| allocation.as_ptr())
+        
     }
     
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // Find which slab this pointer belongs to
-        if let Some(index) = self.find_slab_index(&layout) {
-            let slab_start = self.slabs[index].lock().free_blocks.as_ptr() as usize;
-            let slab_end = slab_start + self.slabs[index].lock().blocks_count * self.slabs[index].lock().block_size;
-            let ptr_addr = ptr as usize;
+        // Find which region this pointer belongs to
+        let ptr_addr = ptr as usize;
+        
+        // Check each slab region
+        for i in 0..BLOCK_SIZES.len() {
+            let (region_start, region_end) = *self.slab_heap_regions[i].lock();
             
-            if ptr_addr >= slab_start && ptr_addr < slab_end {
-                self.slabs[index].lock().deallocate(NonNull::new_unchecked(ptr));
+            if ptr_addr >= region_start && ptr_addr < region_end {
+                // Found the slab this pointer belongs to
+                unsafe {
+                    self.slabs[i].lock().deallocate(NonNull::new_unchecked(ptr));
+                }
                 return;
             }
         }
         
-        // If not in any slab, use fallback allocator
-        self.fallback_allocator.deallocate(
-            NonNull::new_unchecked(ptr),
-            layout
-        );
+        // If not in any slab region, use fallback allocator
+        unsafe {
+            self.fallback_allocator.lock().deallocate(
+                NonNull::new_unchecked(ptr),
+                layout
+            );
+        }
     }
 }
 
@@ -228,5 +266,56 @@ mod tests {
             v.push(i);
         }
         assert_eq!(v.len(), 1000);
+    }
+    
+    #[test_case]
+    fn test_specific_slab_sizes() {
+        // Initialize allocator
+        init_heap();
+        
+        // Test allocations for each specific slab size
+        for &size in BLOCK_SIZES {
+            let v = vec![0u8; size - 1]; // Allocate just under each size
+            assert_eq!(v.len(), size - 1);
+        }
+    }
+    
+    #[test_case]
+    fn test_boundary_allocations() {
+        // Initialize allocator
+        init_heap();
+        
+        // Test allocations at size boundaries
+        for i in 0..BLOCK_SIZES.len() - 1 {
+            let size = BLOCK_SIZES[i];
+            let next_size = BLOCK_SIZES[i + 1];
+            
+            // Allocate at the exact size
+            let v1 = vec![0u8; size];
+            assert_eq!(v1.len(), size);
+            
+            // Allocate just over this size (should use next slab size)
+            let v2 = vec![0u8; size + 1];
+            assert_eq!(v2.len(), size + 1);
+        }
+    }
+    
+    #[test_case]
+    fn test_reuse_after_deallocation() {
+        // Initialize allocator
+        init_heap();
+        
+        // Allocate and immediately deallocate to test block reuse
+        for _ in 0..10 {
+            for &size in BLOCK_SIZES {
+                let v = vec![0u8; size - 1];
+                assert_eq!(v.len(), size - 1);
+                // v is dropped here, should be deallocated
+            }
+        }
+        
+        // If blocks are properly reused, this should still succeed
+        let large_vec = vec![0u8; 50000];
+        assert_eq!(large_vec.len(), 50000);
     }
 }
