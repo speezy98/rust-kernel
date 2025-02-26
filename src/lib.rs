@@ -8,6 +8,7 @@
 pub mod vga_buffer;
 pub  mod serial;
 pub mod slab_allocator;
+pub mod memory;
 
 use core::panic::PanicInfo;
 

@@ -3,6 +3,7 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::NonNull;
 use core::marker::PhantomData;
+use crate::memory::virt_to_phys;
 use spin::Mutex;
 
 // Define the fixed sizes we'll support in our slab allocator
