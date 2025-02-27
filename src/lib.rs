@@ -3,14 +3,43 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+#![feature(abi_x86_interrupt)]
+#![feature(alloc_error_handler)]
 
+// Enable the alloc crate
+extern crate alloc;
 
 pub mod vga_buffer;
-pub  mod serial;
+pub mod serial;
 pub mod slab_allocator;
 pub mod memory;
 
+use bootloader::BootInfo;
 use core::panic::PanicInfo;
+use memory::frame_allocator::BootInfoFrameAllocator;
+use x86_64::VirtAddr;
+
+/// Initialize kernel subsystems
+pub fn init(boot_info: &'static BootInfo) {
+    let phys_mem_offset = VirtAddr::new(0xb8000); // Use VGA buffer as a known mapped address
+    
+    let mut mapper = unsafe { memory::init(phys_mem_offset) };
+    let mut frame_allocator = unsafe {
+        BootInfoFrameAllocator::init(&boot_info.memory_map)
+    };
+    
+    // Initialize heap allocator
+    slab_allocator::init_heap(&mut mapper, &mut frame_allocator)
+        .expect("Heap initialization failed");
+    
+    println!("Kernel initialized successfully!");
+}
+
+// Called when allocation fails
+#[alloc_error_handler]
+fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
+    panic!("Allocation error: {:?}", layout);
+}
 
 pub trait Testable {
     fn run(&self) -> ();
@@ -27,7 +56,6 @@ where
     }
 }
 
-
 pub fn test_runner(tests: &[&dyn Testable]) {
     serial_println!("Running {} tests", tests.len());
     for test in tests {
@@ -42,27 +70,28 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
     serial_println!("Error: {}\n", info);
     exit_qemu(QemuExitCode::Failed);
     loop {}
-
 }
+
 #[cfg(test)]
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn _start() -> ! {
-    slab_allocator::init_heap();
+    init_test();
     test_main();
-    #[allow(clippy::empty_loop)]
-    loop {}
+    hlt_loop();
+}
+
+fn init_test() {
+    // Minimal test initialization
 }
 
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     test_panic_handler(info)
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
-
 pub enum QemuExitCode {
     Success = 0x10,
     Failed = 0x11,
@@ -77,16 +106,13 @@ pub fn exit_qemu(exit_code: QemuExitCode) {
     }
 }
 
-
-
-
-
-
-
+pub fn hlt_loop() -> ! {
+    loop {
+        x86_64::instructions::hlt();
+    }
+}
 
 #[test_case]
 fn trivial_assertion() {
     assert_eq!(1, 1);
-    
 }
-
