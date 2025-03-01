@@ -13,6 +13,8 @@ pub mod vga_buffer;
 pub mod serial;
 pub mod slab_allocator;
 pub mod memory;
+pub mod fs;        // New filesystem module
+pub mod task;      // New task management module
 
 use bootloader::BootInfo;
 use core::panic::PanicInfo;
@@ -31,6 +33,9 @@ pub fn init(boot_info: &'static BootInfo) {
     // Initialize heap allocator
     slab_allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("Heap initialization failed");
+    
+    // Initialize task scheduler
+    task::init();
     
     println!("Kernel initialized successfully!");
 }

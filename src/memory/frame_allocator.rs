@@ -1,4 +1,4 @@
-// src/memory/frame_allocator.rs
+
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 use x86_64::{
     structures::paging::{
