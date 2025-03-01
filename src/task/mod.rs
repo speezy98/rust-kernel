@@ -1,19 +1,16 @@
-use alloc::collections::VecDeque;
-use alloc::boxed::Box;
-use alloc::sync::{Arc, Weak};
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use core::cell::UnsafeCell;
-use spin::Mutex;
-use lazy_static::lazy_static;
+
 use x86_64::VirtAddr;
+
 
 // Multitasking components
 pub mod context;
 pub mod scheduler;
+// Add these lines to src/task/mod.rs
+pub use scheduler::{spawn, yield_task, current_task_id};
 
 use context::TaskContext;
-use scheduler::Scheduler;
+
 
 // Global process ID counter
 static NEXT_PID: AtomicUsize = AtomicUsize::new(1);

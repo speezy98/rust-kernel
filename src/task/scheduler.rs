@@ -2,6 +2,7 @@ use super::{Task, TaskState};
 use alloc::collections::VecDeque;
 use spin::Mutex;
 use lazy_static::lazy_static;
+use crate::task::context::TaskContext;
 
 lazy_static! {
     pub static ref SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
@@ -88,38 +89,75 @@ impl Scheduler {
     pub fn schedule(&mut self) {
         let current_task_id = unsafe { CURRENT_TASK_ID };
         
-        // Get the next task
-        if let Some(next_task) = self.next_task() {
-            // Get the current task
-            if current_task_id > 0 {
-                if let Some(current_task) = self.get_task_by_id(current_task_id) {
-                    // Update task states
-                    if current_task.state == TaskState::Running {
-                        current_task.state = TaskState::Ready;
-                    }
-                    
-                    next_task.state = TaskState::Running;
-                    
-                    // Save current task id for the next context switch
-                    let next_task_id = next_task.id;
-                    
-                    // Perform context switch
-                    unsafe {
-                        let current_context = &mut current_task.context;
-                        let next_context = &next_task.context;
-                        
-                        CURRENT_TASK_ID = next_task_id;
-                        TaskContext::switch(current_context, next_context);
-                    }
-                    
-                    return;
-                }
-            } else {
-                // No current task, just set the next task as running
-                next_task.state = TaskState::Running;
-                unsafe { CURRENT_TASK_ID = next_task.id; }
+        // Check if there are any tasks to schedule
+        if self.tasks.is_empty() {
+            return;
+        }
+        
+        // Find the next ready task's index
+        let task_count = self.tasks.len();
+        let start_index = match self.current_task_index {
+            Some(index) => (index + 1) % task_count,
+            None => 0,
+        };
+        
+        // Find the next ready task's index
+        let mut next_task_index = None;
+        for offset in 0..task_count {
+            let index = (start_index + offset) % task_count;
+            if self.tasks[index].state == TaskState::Ready {
+                next_task_index = Some(index);
+                break;
             }
         }
+        
+        // If no ready task is found, return
+        let next_task_index = match next_task_index {
+            Some(index) => index,
+            None => return,
+        };
+        
+        // Update next task state and get its ID
+        self.tasks[next_task_index].state = TaskState::Running;
+        let next_task_id = self.tasks[next_task_index].id;
+        
+        // Update current task's state if there is one
+        if current_task_id > 0 {
+            // Find the current task's index
+            let mut current_task_index = None;
+            for (i, task) in self.tasks.iter().enumerate() {
+                if task.id == current_task_id {
+                    current_task_index = Some(i);
+                    break;
+                }
+            }
+            
+            if let Some(current_index) = current_task_index {
+                // Update current task state
+                if self.tasks[current_index].state == TaskState::Running {
+                    self.tasks[current_index].state = TaskState::Ready;
+                }
+                
+                // Get raw pointers to the contexts to avoid borrow issues
+                let current_context_ptr: *mut TaskContext = &mut self.tasks[current_index].context;
+                let next_context_ptr: *const TaskContext = &self.tasks[next_task_index].context;
+                
+                // Update scheduler state
+                self.current_task_index = Some(next_task_index);
+                
+                // Perform context switch using raw pointers
+                unsafe {
+                    CURRENT_TASK_ID = next_task_id;
+                    TaskContext::switch(&mut *current_context_ptr, &*next_context_ptr);
+                }
+                
+                return;
+            }
+        }
+        
+        // No current task, just update the scheduler state
+        self.current_task_index = Some(next_task_index);
+        unsafe { CURRENT_TASK_ID = next_task_id; }
     }
 }
 

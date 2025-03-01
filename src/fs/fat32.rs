@@ -2,6 +2,8 @@ use crate::println;
 use alloc::vec::Vec;
 use alloc::string::String;
 use core::convert::TryInto;
+use alloc::vec;
+use crate::fs::FileHandle;
 
 // FAT32 Disk Layout Constants
 const BYTES_PER_SECTOR: usize = 512;
@@ -44,7 +46,9 @@ pub struct FatBootSector {
 }
 
 #[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
 pub struct DirectoryEntry {
+    // Your existing fields remain unchanged
     name: [u8; 8],
     ext: [u8; 3],
     attributes: u8,

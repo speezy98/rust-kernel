@@ -35,7 +35,7 @@ pub fn init(boot_info: &'static BootInfo) {
         .expect("Heap initialization failed");
     
     // Initialize task scheduler
-    task::init();
+    task::scheduler::init();
     
     println!("Kernel initialized successfully!");
 }
