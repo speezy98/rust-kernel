@@ -29,49 +29,50 @@ impl TaskContext {
     
     // Switch from the current context to the next context
     pub unsafe fn switch(current: &mut TaskContext, next: &TaskContext) {
-        // Save the current context and restore the next context
         unsafe {
             asm!(
                 // Save the current context
-                "mov [{current} + 0x00], r15",
-                "mov [{current} + 0x08], r14",
-                "mov [{current} + 0x10], r13",
-                "mov [{current} + 0x18], r12",
-                "mov [{current} + 0x20], rbx",
-                "mov [{current} + 0x28], rbp",
+                "mov [{0} + 0x00], r15",
+                "mov [{0} + 0x08], r14",
+                "mov [{0} + 0x10], r13",
+                "mov [{0} + 0x18], r12",
+                "mov [{0} + 0x20], rbx",
+                "mov [{0} + 0x28], rbp",
                 
-                // Save RIP (address of the instruction right after 'call')
-                "lea rax, [rip + 0]",
-                "mov [{current} + 0x30], rax",
+                // Save RIP (return address is on the stack)
+                "mov rax, [rsp]",
+                "mov [{0} + 0x30], rax",
                 
                 // Save RFLAGS
                 "pushfq",
                 "pop rax",
-                "mov [{current} + 0x38], rax",
+                "mov [{0} + 0x38], rax",
                 
-                // Save RSP (must be adjusted for return address pushed by 'call')
+                // Save RSP (must be adjusted for the return address on stack)
                 "lea rax, [rsp + 8]",
-                "mov [{current} + 0x40], rax",
+                "mov [{0} + 0x40], rax",
                 
                 // Load the next context
-                "mov r15, [{next} + 0x00]",
-                "mov r14, [{next} + 0x08]",
-                "mov r13, [{next} + 0x10]",
-                "mov r12, [{next} + 0x18]",
-                "mov rbx, [{next} + 0x20]",
-                "mov rbp, [{next} + 0x28]",
+                "mov r15, [{1} + 0x00]",
+                "mov r14, [{1} + 0x08]",
+                "mov r13, [{1} + 0x10]",
+                "mov r12, [{1} + 0x18]",
+                "mov rbx, [{1} + 0x20]",
+                "mov rbp, [{1} + 0x28]",
                 
                 // Load RFLAGS
-                "mov rax, [{next} + 0x38]",
+                "mov rax, [{1} + 0x38]",
                 "push rax",
                 "popfq",
                 
-                // Load RSP and RIP
-                "mov rsp, [{next} + 0x40]",
-                "jmp [rax]", // Jump to the next task
+                // Set up stack and jump to next task
+                "mov rsp, [{1} + 0x40]",
+                "mov rax, [{1} + 0x30]",
+                "push rax",
+                "ret",
                 
-                current = in(reg) current,
-                next = in(reg) next,
+                in(reg) current,
+                in(reg) next,
                 clobber_abi("sysv64"),
             );
         } 

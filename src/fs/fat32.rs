@@ -370,7 +370,7 @@ impl<D: Disk> crate::fs::FileSystem for FileSystem<D> {
         Ok(())
     }
     
-    fn open(&self, path: &str) -> Result<FileHandle, &'static str> {
+    fn open(&mut self, path: &str) -> Result<FileHandle, &'static str> {
         // Find the file by path
         let entry = match self.find_by_path(path)? {
             Some(entry) => entry,
@@ -387,7 +387,16 @@ impl<D: Disk> crate::fs::FileSystem for FileSystem<D> {
             size: entry.file_size as usize,
         };
         
-        Ok(handle)
+        // Build the cluster chain for the file
+        let cluster_chain = self.build_cluster_chain(entry.get_first_cluster())?;
+        
+        // Store the file handle and its cluster chain
+        self.open_files.push((handle, cluster_chain));  // This now works because handle implements Copy
+        
+        // Increment the next file handle ID
+        self.next_file_handle_id += 1;
+        
+        Ok(handle)  // Returns a copy of the handle
     }
     
     fn read(&self, handle: &mut FileHandle, buffer: &mut [u8]) -> Result<usize, &'static str> {

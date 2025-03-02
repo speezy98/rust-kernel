@@ -138,20 +138,24 @@ impl Scheduler {
                     self.tasks[current_index].state = TaskState::Ready;
                 }
                 
+                // Update scheduler state and task ID BEFORE context switch
+                self.current_task_index = Some(next_task_index);
+                
+                // Important: Update the global task ID before switching context
+                unsafe {
+                    CURRENT_TASK_ID = next_task_id;
+                }
+                
                 // Get raw pointers to the contexts to avoid borrow issues
                 let current_context_ptr: *mut TaskContext = &mut self.tasks[current_index].context;
                 let next_context_ptr: *const TaskContext = &self.tasks[next_task_index].context;
                 
-                // Update scheduler state
-                self.current_task_index = Some(next_task_index);
-                
                 // Perform context switch using raw pointers
                 unsafe {
-                    CURRENT_TASK_ID = next_task_id;
                     TaskContext::switch(&mut *current_context_ptr, &*next_context_ptr);
                 }
                 
-                return;
+                // No code should run here until we switch back to this task
             }
         }
         

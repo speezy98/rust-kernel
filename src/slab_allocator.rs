@@ -48,10 +48,16 @@ impl Slab {
         
         // Initialize free block list
         let mut current_block = heap_start as *mut FreeBlock;
-        for _ in 0..blocks_count - 1 {
+        
+        for i in 0..blocks_count - 1 {
             unsafe {
-                (*current_block).next = NonNull::new(current_block.add(1)).unwrap();
-                current_block = current_block.add(1);
+                // Initialize the current block's next pointer
+                (*current_block).next = NonNull::new(
+                    (heap_start + (i + 1) * block_size) as *mut FreeBlock
+                ).unwrap();
+                
+                // Move to the next block
+                current_block = (heap_start + (i + 1) * block_size) as *mut FreeBlock;
             }
         }
         

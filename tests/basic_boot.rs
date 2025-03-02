@@ -8,7 +8,7 @@ use core::panic::PanicInfo;
 use rust_kernel::println;
 
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn _start() -> ! {
     #[cfg(test)]
     test_main();
