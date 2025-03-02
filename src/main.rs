@@ -9,7 +9,7 @@ extern crate alloc;
 use bootloader::{BootInfo, entry_point};
 use core::panic::PanicInfo;
 use rust_kernel::println;
-use rust_kernel::task;
+//use rust_kernel::task;
 //use x86_64::VirtAddr;
 use alloc::{boxed::Box, vec::Vec};
 use rust_kernel::task::scheduler::{spawn, yield_task, current_task_id};
